@@ -11,21 +11,16 @@ from .const import (
     CONF_FACTORS,
     CONF_MIN,
     CONF_MAX,
-    CONF_GAMMA,
     CONF_FORWARD_CT,
     CONF_FORWARD_COLOR,
-    DEFAULT_GAMMA,
     DEFAULT_NAME,
 )
 
 STEP_USER = vol.Schema({
     vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
     vol.Required(CONF_ENTITIES): selector.selector({
-        "entity": {"multiple": True, "domain": "light"}
+        "entity": {"multiple": True, "reorder": True, "domain": "light"}
     }),
-    vol.Optional(CONF_GAMMA, default=DEFAULT_GAMMA): selector.NumberSelector(
-        selector.NumberSelectorConfig(min=0.1, max=4, step=0.1, mode=selector.NumberSelectorMode.BOX)
-    ),
     vol.Optional(CONF_FORWARD_CT, default=False): bool,
     vol.Optional(CONF_FORWARD_COLOR, default=False): bool,
 })
@@ -36,6 +31,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._user_data: dict | None = None
+        self._members_keymap: dict[str, tuple[str, str]] = {}
     
     @staticmethod
     @callback
@@ -49,19 +45,29 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_show_form(step_id="user", data_schema=STEP_USER)
         # Store selection and continue to per-member configuration
         self._user_data = dict(user_input)
+        # normalize entities to list[str]
+        self._user_data[CONF_ENTITIES] = _normalize_entities(self._user_data.get(CONF_ENTITIES, []))
         return await self.async_step_members()
 
     async def async_step_members(self, user_input=None):
         assert self._user_data is not None
         entities = list(self._user_data.get(CONF_ENTITIES, []))
-        # Dynamic schema per child: factor/min/max
+        # Dynamic schema per child with friendly labels
         schema: dict = {}
+        self._members_keymap = {}
         for e in entities:
-            schema[vol.Optional(f"factor__{e}", default=1.0)] = selector.NumberSelector(
+            friendly = self._friendly_name(e)
+            k_factor = f"Faktor – {friendly}"
+            k_min = f"Minimum – {friendly}"
+            k_max = f"Maximum – {friendly}"
+            schema[vol.Optional(k_factor, default=1.0)] = selector.NumberSelector(
                 selector.NumberSelectorConfig(min=0, max=5, step=0.01, mode=selector.NumberSelectorMode.BOX)
             )
-            schema[vol.Optional(f"min__{e}", default=1)] = int
-            schema[vol.Optional(f"max__{e}", default=255)] = int
+            schema[vol.Optional(k_min, default=1)] = int
+            schema[vol.Optional(k_max, default=255)] = int
+            self._members_keymap[k_factor] = ("factor", e)
+            self._members_keymap[k_min] = ("min", e)
+            self._members_keymap[k_max] = ("max", e)
 
         if user_input is None:
             return self.async_show_form(step_id="members", data_schema=vol.Schema(schema))
@@ -71,10 +77,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data[CONF_FACTORS] = {}
         data[CONF_MIN] = {}
         data[CONF_MAX] = {}
-        for e in entities:
-            data[CONF_FACTORS][e] = float(user_input.get(f"factor__{e}", 1.0))
-            data[CONF_MIN][e] = int(user_input.get(f"min__{e}", 1))
-            data[CONF_MAX][e] = int(user_input.get(f"max__{e}", 255))
+        for label, (kind, eid) in self._members_keymap.items():
+            if kind == "factor":
+                data[CONF_FACTORS][eid] = float(user_input.get(label, 1.0))
+            elif kind == "min":
+                data[CONF_MIN][eid] = int(user_input.get(label, 1))
+            elif kind == "max":
+                data[CONF_MAX][eid] = int(user_input.get(label, 255))
 
         return self.async_create_entry(title=data.get(CONF_NAME, DEFAULT_NAME), data=data)
 
@@ -87,21 +96,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     def __init__(self, config_entry):
         self.config_entry = config_entry
         self._draft_globals: dict | None = None
+        self._members_keymap: dict[str, tuple[str, str]] = {}
 
     async def async_step_init(self, user_input=None):
         return await self.async_step_edit()
 
     async def async_step_edit(self, user_input=None):
         data = self._merged()
-        entities = list(data.get(CONF_ENTITIES, []))
+        entities = _normalize_entities(data.get(CONF_ENTITIES, []))
         schema = {
             vol.Optional(CONF_NAME, default=data.get(CONF_NAME, DEFAULT_NAME)): str,
             vol.Optional(CONF_ENTITIES, default=entities): selector.selector({
-                "entity": {"multiple": True, "domain": "light"}
+                "entity": {"multiple": True, "reorder": True, "domain": "light"}
             }),
-            vol.Optional(CONF_GAMMA, default=data.get(CONF_GAMMA, DEFAULT_GAMMA)): selector.NumberSelector(
-                selector.NumberSelectorConfig(min=0.1, max=4, step=0.1, mode=selector.NumberSelectorMode.BOX)
-            ),
             vol.Optional(CONF_FORWARD_CT, default=data.get(CONF_FORWARD_CT, False)): bool,
             vol.Optional(CONF_FORWARD_COLOR, default=data.get(CONF_FORWARD_COLOR, False)): bool,
         }
@@ -110,11 +117,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             return self.async_show_form(step_id="edit", data_schema=vol.Schema(schema))
 
         # Store globals and go to per-member edit
-        new_entities = list(user_input.get(CONF_ENTITIES, entities))
+        new_entities = _normalize_entities(user_input.get(CONF_ENTITIES, entities))
         self._draft_globals = {
             CONF_NAME: user_input.get(CONF_NAME, data.get(CONF_NAME, DEFAULT_NAME)),
             CONF_ENTITIES: new_entities,
-            CONF_GAMMA: float(user_input.get(CONF_GAMMA, data.get(CONF_GAMMA, DEFAULT_GAMMA))),
             CONF_FORWARD_CT: bool(user_input.get(CONF_FORWARD_CT, data.get(CONF_FORWARD_CT, False))),
             CONF_FORWARD_COLOR: bool(user_input.get(CONF_FORWARD_COLOR, data.get(CONF_FORWARD_COLOR, False))),
         }
@@ -123,19 +129,27 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_edit_members(self, user_input=None):
         data = self._merged()
         draft = self._draft_globals or {}
-        entities = list(draft.get(CONF_ENTITIES, data.get(CONF_ENTITIES, [])))
+        entities = _normalize_entities(draft.get(CONF_ENTITIES, data.get(CONF_ENTITIES, [])))
 
-        # Dynamic per-child schema with defaults from existing options
+        # Dynamic per-child schema with friendly labels
         schema: dict = {}
+        self._members_keymap = {}
         for e in entities:
+            friendly = self._friendly_name(e)
+            k_factor = f"Faktor – {friendly}"
+            k_min = f"Minimum – {friendly}"
+            k_max = f"Maximum – {friendly}"
             schema[vol.Optional(
-                f"factor__{e}",
+                k_factor,
                 default=float(data.get(CONF_FACTORS, {}).get(e, 1.0)),
             )] = selector.NumberSelector(
                 selector.NumberSelectorConfig(min=0, max=5, step=0.01, mode=selector.NumberSelectorMode.BOX)
             )
-            schema[vol.Optional(f"min__{e}", default=int(data.get(CONF_MIN, {}).get(e, 1)))] = int
-            schema[vol.Optional(f"max__{e}", default=int(data.get(CONF_MAX, {}).get(e, 255)))] = int
+            schema[vol.Optional(k_min, default=int(data.get(CONF_MIN, {}).get(e, 1)))] = int
+            schema[vol.Optional(k_max, default=int(data.get(CONF_MAX, {}).get(e, 255)))] = int
+            self._members_keymap[k_factor] = ("factor", e)
+            self._members_keymap[k_min] = ("min", e)
+            self._members_keymap[k_max] = ("max", e)
 
         if user_input is None:
             return self.async_show_form(step_id="edit_members", data_schema=vol.Schema(schema))
@@ -143,7 +157,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         # Build final options
         opts = {
             CONF_NAME: draft.get(CONF_NAME, data.get(CONF_NAME, DEFAULT_NAME)),
-            CONF_GAMMA: float(draft.get(CONF_GAMMA, data.get(CONF_GAMMA, DEFAULT_GAMMA))),
             CONF_FORWARD_CT: bool(draft.get(CONF_FORWARD_CT, data.get(CONF_FORWARD_CT, False))),
             CONF_FORWARD_COLOR: bool(draft.get(CONF_FORWARD_COLOR, data.get(CONF_FORWARD_COLOR, False))),
             CONF_ENTITIES: entities,
@@ -151,16 +164,42 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             CONF_MIN: {},
             CONF_MAX: {},
         }
-        for e in entities:
-            opts[CONF_FACTORS][e] = float(user_input.get(f"factor__{e}", float(data.get(CONF_FACTORS, {}).get(e, 1.0))))
-            opts[CONF_MIN][e] = int(user_input.get(f"min__{e}", int(data.get(CONF_MIN, {}).get(e, 1))))
-            opts[CONF_MAX][e] = int(user_input.get(f"max__{e}", int(data.get(CONF_MAX, {}).get(e, 255))))
+        for label, (kind, eid) in self._members_keymap.items():
+            if kind == "factor":
+                opts[CONF_FACTORS][eid] = float(user_input.get(label, float(data.get(CONF_FACTORS, {}).get(eid, 1.0))))
+            elif kind == "min":
+                opts[CONF_MIN][eid] = int(user_input.get(label, int(data.get(CONF_MIN, {}).get(eid, 1))))
+            elif kind == "max":
+                opts[CONF_MAX][eid] = int(user_input.get(label, int(data.get(CONF_MAX, {}).get(eid, 255))))
 
         return self.async_create_entry(title="Options", data=opts)
 
     def _merged(self):
         return self.config_entry.data | self.config_entry.options
 
+    def _friendly_name(self, eid: str) -> str:
+        st = self.hass.states.get(eid)
+        if st and st.name:
+            return st.name
+        try:
+            return eid.split(".", 1)[1].replace("_", " ").title()
+        except Exception:
+            return eid
 
 def async_get_options_flow(config_entry):
     return OptionsFlowHandler(config_entry)
+
+
+def _normalize_entities(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    result: list[str] = []
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, str) and item:
+                result.append(item)
+            elif isinstance(item, dict):
+                cand = item.get("entity_id") or item.get("entity")
+                if isinstance(cand, str) and cand:
+                    result.append(cand)
+    return result

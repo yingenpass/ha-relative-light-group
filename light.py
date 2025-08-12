@@ -23,10 +23,8 @@ from .const import (
     CONF_FACTORS,
     CONF_MIN,
     CONF_MAX,
-    CONF_GAMMA,
     CONF_FORWARD_CT,
     CONF_FORWARD_COLOR,
-    DEFAULT_GAMMA,
     DEFAULT_NAME,
     ATTR_MASTER_BRIGHTNESS,
     ATTR_FACTORS,
@@ -34,7 +32,6 @@ from .const import (
     ATTR_MAX,
     SERVICE_SET_FACTOR,
     SERVICE_SET_MIN_MAX,
-    SERVICE_SET_GAMMA,
     SERVICE_APPLY,
 )
 
@@ -43,13 +40,21 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities):
     data = {**entry.data, **entry.options}
     name = data.get(CONF_NAME, DEFAULT_NAME)
-    raw_entities = data.get(CONF_ENTITIES, [])
-    if isinstance(raw_entities, list):
-        entities: list[str] = [e for e in raw_entities if isinstance(e, str) and e]
-    elif isinstance(raw_entities, str):
-        entities = [raw_entities]
-    else:
-        entities = []
+    def _normalize_entities(value) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        result: list[str] = []
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str) and item:
+                    result.append(item)
+                elif isinstance(item, dict):
+                    cand = item.get("entity_id") or item.get("entity")
+                    if isinstance(cand, str) and cand:
+                        result.append(cand)
+        return result
+
+    entities = _normalize_entities(data.get(CONF_ENTITIES, []))
 
     src_factors = data.get(CONF_FACTORS, {})
     if not isinstance(src_factors, dict):
@@ -64,7 +69,6 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities):
     factors: dict[str, float] = {e: float(src_factors.get(e, 1.0)) for e in entities}
     min_map: dict[str, int] = {e: int(src_min.get(e, 1)) for e in entities}
     max_map: dict[str, int] = {e: int(src_max.get(e, 255)) for e in entities}
-    gamma = float(data.get(CONF_GAMMA, DEFAULT_GAMMA))
     forward_ct = bool(data.get(CONF_FORWARD_CT, False))
     forward_color = bool(data.get(CONF_FORWARD_COLOR, False))
 
@@ -75,7 +79,6 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities):
         factors,
         min_map,
         max_map,
-        gamma,
         forward_ct,
         forward_color,
         unique_id=entry.entry_id,
@@ -98,7 +101,6 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
         factors: dict[str, float],
         min_map: dict[str, int],
         max_map: dict[str, int],
-        gamma: float,
         forward_ct: bool,
         forward_color: bool,
         unique_id: str | None = None,
@@ -110,7 +112,7 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
         self.factors = factors
         self.min_map = min_map
         self.max_map = max_map
-        self.gamma = gamma
+        # gamma removed
         self.forward_ct = forward_ct
         self.forward_color = forward_color
 
@@ -192,10 +194,8 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
 
     # ---------- Helpers ----------
     def _apply_gamma(self, base: int) -> int:
-        if self.gamma == 1.0:
-            return base
-        lvl = (base / 255.0) ** self.gamma
-        return int(round(lvl * 255))
+        # gamma removed: passthrough
+        return base
 
     async def async_apply_to_children(self, transition: float | None = None) -> None:
         base255 = self._apply_gamma(self._master_brightness)

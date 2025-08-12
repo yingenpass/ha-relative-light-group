@@ -52,23 +52,6 @@ set_min_max:
           max: 255
           step: 1
 
-set_gamma:
-  name: Set gamma
-  description: Adjust gamma curve for perceived dimming
-  fields:
-    entity_id:
-      required: true
-      selector:
-        entity:
-          domain: light
-    gamma:
-      required: true
-      selector:
-        number:
-          min: 0.1
-          max: 4
-          step: 0.1
-
 apply:
   name: Apply current master to children
   description: Re-apply the current master brightness (and optional color/ct) to all children

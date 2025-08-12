@@ -4,11 +4,22 @@
     "step": {
       "user": {
         "title": "Relative Light Group erstellen",
-        "description": "Mitgliederlichter und Optionen auswählen"
+        "description": "Mitgliederlichter und Optionen auswählen",
+        "data": {
+          "name": "Name",
+          "entities": "Mitglieder-Lichter",
+          "forward_color_temp": "Farbtemperatur weitergeben",
+          "forward_color": "Farbe weitergeben"
+        }
       },
       "members": {
         "title": "Einstellungen pro Mitglied",
-        "description": "Faktor sowie Minimum/Maximum für jedes Kind-Licht konfigurieren"
+        "description": "Faktor sowie Minimum/Maximum für jedes Kind-Licht konfigurieren",
+        "data": {
+          "factor": "Faktor",
+          "min": "Minimum",
+          "max": "Maximum"
+        }
       }
     }
   },
@@ -20,11 +31,22 @@
       },
       "edit": {
         "title": "Relative Gruppe bearbeiten",
-        "description": "Name, Mitglieder und globale Optionen ändern"
+        "description": "Name, Mitglieder und globale Optionen ändern",
+        "data": {
+          "name": "Name",
+          "entities": "Mitglieder-Lichter",
+          "forward_color_temp": "Farbtemperatur weitergeben",
+          "forward_color": "Farbe weitergeben"
+        }
       },
       "edit_members": {
         "title": "Einstellungen pro Mitglied",
-        "description": "Faktor und Minimum/Maximum pro Kind anpassen"
+        "description": "Faktor und Minimum/Maximum pro Kind anpassen",
+        "data": {
+          "factor": "Faktor",
+          "min": "Minimum",
+          "max": "Maximum"
+        }
       }
     }
   }

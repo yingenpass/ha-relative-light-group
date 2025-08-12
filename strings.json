@@ -4,11 +4,22 @@
       "step": {
         "user": {
           "title": "Create a Relative Light Group",
-          "description": "Select member lights and options"
+        "description": "Select member lights and options",
+        "data": {
+          "name": "Name",
+          "entities": "Member lights",
+          "forward_color_temp": "Forward color temperature",
+          "forward_color": "Forward color"
+        }
       },
       "members": {
         "title": "Per-member settings",
-        "description": "Configure factor and min/max for each child light"
+        "description": "Configure factor and min/max for each child light",
+        "data": {
+          "factor": "Factor",
+          "min": "Minimum",
+          "max": "Maximum"
+        }
         }
       },
       "abort": {},
@@ -23,11 +34,22 @@
         },
         "edit": {
           "title": "Edit Relative Group",
-          "description": "Change name, members and global options"
+        "description": "Change name, members and global options",
+        "data": {
+          "name": "Name",
+          "entities": "Member lights",
+          "forward_color_temp": "Forward color temperature",
+          "forward_color": "Forward color"
+        }
         },
         "edit_members": {
           "title": "Per-member settings",
-          "description": "Adjust factor and min/max per child"
+        "description": "Adjust factor and min/max per child",
+        "data": {
+          "factor": "Factor",
+          "min": "Minimum",
+          "max": "Maximum"
+        }
         }
       }
     }
