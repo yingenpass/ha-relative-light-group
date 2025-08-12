@@ -5,7 +5,7 @@ from typing import Any
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
-    ATTR_COLOR_TEMP,
+    ATTR_COLOR_TEMP_KELVIN,
     ATTR_HS_COLOR,
     ATTR_TRANSITION,
     ColorMode,
@@ -88,7 +88,6 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities):
 
 class RelativeLightGroup(LightEntity, RestoreEntity):
     _attr_should_poll = False
-    _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
     _attr_available = True
     _attr_color_mode = ColorMode.BRIGHTNESS
     _attr_supported_features = LightEntityFeature.TRANSITION
@@ -115,10 +114,17 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
         # gamma removed
         self.forward_ct = forward_ct
         self.forward_color = forward_color
+        self._child_supports_ct: dict[str, bool] = {}
+        self._child_supports_color: dict[str, bool] = {}
+        self._refresh_child_capabilities()
+
+        # Dynamisch die unterstützten Farbmodi je nach Optionen setzen,
+        # damit die Gruppe Farb-/Farbtemperaturregler im UI anbietet
+        self._recompute_supported_color_modes()
 
         self._is_on = False
         self._master_brightness = 255
-        self._last_ct: int | None = None
+        self._last_kelvin: int | None = None
         self._last_hs: tuple[float, float] | None = None
 
         # listen only to on/off availability changes to reflect is_on; do not read brightness back
@@ -141,18 +147,42 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
                 return
             any_on = any(self.hass.states.is_state(e, "on") for e in self.entities)
             self._is_on = any_on
+            # Fähigkeiten des betroffenen Kindes aktualisieren
+            self._refresh_child_capabilities([eid])
+            # Angebotsliste der Farbmodi ggf. neu berechnen
+            self._recompute_supported_color_modes()
             self.async_write_ha_state()
         self._unsubs.append(self.hass.bus.async_listen("state_changed", _state_changed))
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+        # Beim Hinzufügen einmal Fähigkeiten der Kinder erfassen und UI anpassen
+        self._refresh_child_capabilities()
+        self._recompute_supported_color_modes()
         if (state := await self.async_get_last_state()) is not None:
             self._is_on = state.state == "on"
             mb = state.attributes.get(ATTR_MASTER_BRIGHTNESS)
             if mb is not None:
                 self._master_brightness = int(mb)
-            self._last_ct = state.attributes.get(ATTR_COLOR_TEMP)
+            # Prefer Kelvin; fallback von Mireds
+            last_kelvin = state.attributes.get("color_temp_kelvin")
+            if last_kelvin is None:
+                last_mireds = state.attributes.get("color_temp")
+                if last_mireds is not None:
+                    try:
+                        last_kelvin = int(round(1000000.0 / float(last_mireds)))
+                    except Exception:
+                        last_kelvin = None
+            if last_kelvin is not None:
+                self._last_kelvin = int(last_kelvin)
             self._last_hs = state.attributes.get(ATTR_HS_COLOR)
+            # Farbmodus entsprechend letztem Zustand wählen, falls erlaubt
+            if self.forward_color and self._last_hs is not None:
+                self._set_color_mode_if_supported(ColorMode.HS)
+            elif self.forward_ct and self._last_kelvin is not None:
+                self._set_color_mode_if_supported(ColorMode.COLOR_TEMP)
+        # Initialen Zustand veröffentlichen
+        self.async_write_ha_state()
 
     # ---------- LightEntity API ----------
     @property
@@ -172,14 +202,49 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
             ATTR_MAX: self.max_map,
         }
 
+    @property
+    def hs_color(self) -> tuple[float, float] | None:
+        # Aktuellen Farbwert zurückgeben, damit UI den Farbwähler initialisiert
+        if self.forward_color:
+            return self._last_hs
+        return None
+
+    @property
+    def color_temp_kelvin(self) -> int | None:
+        # Aktuelle Kelvin-Farbtemperatur zurückgeben
+        if self.forward_ct:
+            return self._last_kelvin
+        return None
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         b = int(kwargs.get(ATTR_BRIGHTNESS, self._master_brightness))
         self._master_brightness = max(1, min(255, int(b)))
-        if ATTR_COLOR_TEMP in kwargs:
-            self._last_ct = int(kwargs[ATTR_COLOR_TEMP])
+        # Farbtemperatur (Kelvin bevorzugt; Mireds kompatibel) akzeptieren
+        if ATTR_COLOR_TEMP_KELVIN in kwargs:
+            try:
+                kelvin = float(kwargs.get(ATTR_COLOR_TEMP_KELVIN))
+                if kelvin > 0:
+                    self._last_kelvin = int(round(kelvin))
+                    if self.forward_ct:
+                        self._set_color_mode_if_supported(ColorMode.COLOR_TEMP)
+            except Exception:
+                pass
+        elif "color_temp" in kwargs:
+            try:
+                mireds = float(kwargs.get("color_temp"))
+                if mireds > 0:
+                    self._last_kelvin = int(round(1000000.0 / mireds))
+                    if self.forward_ct:
+                        self._set_color_mode_if_supported(ColorMode.COLOR_TEMP)
+            except Exception:
+                pass
         if ATTR_HS_COLOR in kwargs:
             self._last_hs = tuple(kwargs[ATTR_HS_COLOR])  # type: ignore[assignment]
+            if self.forward_color:
+                self._set_color_mode_if_supported(ColorMode.HS)
         tr = kwargs.get(ATTR_TRANSITION)
+        # Farbmodus final validieren (abhängig von Kinder-Fähigkeiten)
+        self._recompute_supported_color_modes()
         await self.async_apply_to_children(transition=tr)
         self._is_on = True
         self.async_write_ha_state()
@@ -207,13 +272,95 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
             payload: dict[str, Any] = {ATTR_BRIGHTNESS: target}
             if transition is not None:
                 payload[ATTR_TRANSITION] = transition
-            if self.forward_ct and self._last_ct is not None:
-                payload[ATTR_COLOR_TEMP] = self._last_ct
-            if self.forward_color and self._last_hs is not None:
+            if self.forward_ct and self._last_kelvin is not None and self._child_supports_ct.get(eid, False):
+                payload[ATTR_COLOR_TEMP_KELVIN] = self._last_kelvin
+            if self.forward_color and self._last_hs is not None and self._child_supports_color.get(eid, False):
                 payload[ATTR_HS_COLOR] = self._last_hs
             tasks.append(self.hass.services.async_call("light", "turn_on", {"entity_id": eid, **payload}, blocking=True))
         if tasks:
             await asyncio.gather(*tasks)
+
+    # ---------- Capabilities ----------
+    def _refresh_child_capabilities(self, only_entities: list[str] | None = None) -> None:
+        target_list = only_entities if only_entities is not None else self.entities
+        min_k_values: list[int] = []
+        max_k_values: list[int] = []
+        for child in target_list:
+            st = self.hass.states.get(child)
+            supports_ct = False
+            supports_color = False
+            if st is not None:
+                scm = st.attributes.get("supported_color_modes")
+                if isinstance(scm, (list, set)):
+                    modes = {str(m).lower() for m in scm}
+                    # Farbtemperatur
+                    supports_ct = "color_temp" in modes
+                    # Farbe (beliebiger Farbraum)
+                    color_modes = {"hs", "xy", "rgb", "rgbw", "rgbww", "rgbcw"}
+                    supports_color = any(m in modes for m in color_modes)
+                # Kelvin-Bereich ermitteln
+                if supports_ct:
+                    child_min_k = st.attributes.get("min_color_temp_kelvin")
+                    child_max_k = st.attributes.get("max_color_temp_kelvin")
+                    if child_min_k is None or child_max_k is None:
+                        # Fallback über mireds
+                        min_mireds = st.attributes.get("min_mireds")
+                        max_mireds = st.attributes.get("max_mireds")
+                        if max_mireds is not None:
+                            try:
+                                child_min_k = int(round(1000000.0 / float(max_mireds)))
+                            except Exception:
+                                child_min_k = None
+                        if min_mireds is not None:
+                            try:
+                                child_max_k = int(round(1000000.0 / float(min_mireds)))
+                            except Exception:
+                                child_max_k = None
+                    if isinstance(child_min_k, (int, float)):
+                        min_k_values.append(int(child_min_k))
+                    if isinstance(child_max_k, (int, float)):
+                        max_k_values.append(int(child_max_k))
+            self._child_supports_ct[child] = supports_ct
+            self._child_supports_color[child] = supports_color
+        # Gruppen-Kelvin-Bereich als Schnittmenge der Kinder
+        if min_k_values and max_k_values:
+            self._attr_min_color_temp_kelvin = max(min_k_values)
+            self._attr_max_color_temp_kelvin = min(max_k_values)
+            if self._attr_min_color_temp_kelvin > self._attr_max_color_temp_kelvin:
+                # Fallback: unrealistischer Schnitt – nimm Spanne des ersten Kindes
+                self._attr_min_color_temp_kelvin = min(min_k_values)
+                self._attr_max_color_temp_kelvin = max(max_k_values)
+        else:
+            self._attr_min_color_temp_kelvin = None
+            self._attr_max_color_temp_kelvin = None
+
+    # ---------- Modes ----------
+    def _recompute_supported_color_modes(self) -> None:
+        modes: set[ColorMode] = set()
+        has_ct = self.forward_ct and any(self._child_supports_ct.values())
+        has_color = self.forward_color and any(self._child_supports_color.values())
+        if has_color:
+            modes.add(ColorMode.HS)
+        if has_ct:
+            modes.add(ColorMode.COLOR_TEMP)
+        if not modes:
+            modes = {ColorMode.BRIGHTNESS}
+        self._attr_supported_color_modes = modes
+        # Stelle sicher, dass der aktuelle Farbmodus ein gültiger ist
+        if self._attr_color_mode not in modes:
+            self._set_color_mode_if_supported(self._attr_color_mode)
+
+    def _set_color_mode_if_supported(self, preferred: ColorMode) -> None:
+        modes = self._attr_supported_color_modes or set()
+        if preferred in modes:
+            self._attr_color_mode = preferred
+            return
+        if ColorMode.HS in modes:
+            self._attr_color_mode = ColorMode.HS
+        elif ColorMode.COLOR_TEMP in modes:
+            self._attr_color_mode = ColorMode.COLOR_TEMP
+        else:
+            self._attr_color_mode = ColorMode.BRIGHTNESS
 
     def set_factor(self, child: str, factor: float) -> None:
         self.factors[child] = float(factor)

@@ -16,9 +16,9 @@
         "title": "Per-member settings",
         "description": "Configure factor and min/max for each child light",
         "data": {
-          "factor": "Factor",
-          "min": "Minimum",
-          "max": "Maximum"
+          "factor": "Scaling factor",
+          "min": "Minimum brightness",
+          "max": "Maximum brightness"
         }
         }
       },
@@ -46,9 +46,9 @@
           "title": "Per-member settings",
         "description": "Adjust factor and min/max per child",
         "data": {
-          "factor": "Factor",
-          "min": "Minimum",
-          "max": "Maximum"
+          "factor": "Scaling factor",
+          "min": "Minimum brightness",
+          "max": "Maximum brightness"
         }
         }
       }

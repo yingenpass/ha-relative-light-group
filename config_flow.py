@@ -36,7 +36,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
-        return OptionsFlowHandler(config_entry)
+        # Deprecation: den config_entry nicht explizit setzen
+        return OptionsFlowHandler()
 
     # Options-Flow wird via Modul-Funktion am Ende bereitgestellt
 
@@ -86,6 +87,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data[CONF_MAX][eid] = int(user_input.get(label, 255))
 
         return self.async_create_entry(title=data.get(CONF_NAME, DEFAULT_NAME), data=data)
+    def _friendly_name(self, eid: str) -> str:
+        st = self.hass.states.get(eid)
+        if st and st.name:
+            return st.name
+        try:
+            return eid.split(".", 1)[1].replace("_", " ").title()
+        except Exception:
+            return eid
 
     async def async_step_import(self, user_input):
         # not used, but allows YAML import in future
@@ -93,8 +102,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
-    def __init__(self, config_entry):
-        self.config_entry = config_entry
+    def __init__(self, config_entry=None):
+        # config_entry wird vom Core gesetzt; nicht mehr selbst zuweisen (Deprecation)
         self._draft_globals: dict | None = None
         self._members_keymap: dict[str, tuple[str, str]] = {}
 
@@ -104,14 +113,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_edit(self, user_input=None):
         data = self._merged()
         entities = _normalize_entities(data.get(CONF_ENTITIES, []))
+        # Fähigkeiten der aktuellen Mitglieder ermitteln
+        caps = self._capabilities(entities)
         schema = {
             vol.Optional(CONF_NAME, default=data.get(CONF_NAME, DEFAULT_NAME)): str,
             vol.Optional(CONF_ENTITIES, default=entities): selector.selector({
                 "entity": {"multiple": True, "reorder": True, "domain": "light"}
             }),
-            vol.Optional(CONF_FORWARD_CT, default=data.get(CONF_FORWARD_CT, False)): bool,
-            vol.Optional(CONF_FORWARD_COLOR, default=data.get(CONF_FORWARD_COLOR, False)): bool,
         }
+        # Biete globale Optionen nur an, wenn mindestens ein Kind sie unterstützt
+        if caps.get("any_ct"):
+            schema[vol.Optional(CONF_FORWARD_CT, default=data.get(CONF_FORWARD_CT, False))] = bool
+        if caps.get("any_color"):
+            schema[vol.Optional(CONF_FORWARD_COLOR, default=data.get(CONF_FORWARD_COLOR, False))] = bool
 
         if user_input is None:
             return self.async_show_form(step_id="edit", data_schema=vol.Schema(schema))
@@ -186,8 +200,31 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         except Exception:
             return eid
 
+    def _capabilities(self, entities: list[str]) -> dict[str, bool]:
+        any_ct = False
+        all_ct = True if entities else False
+        any_color = False
+        all_color = True if entities else False
+        for eid in entities:
+            st = self.hass.states.get(eid)
+            supports_ct = False
+            supports_color = False
+            if st is not None:
+                scm = st.attributes.get("supported_color_modes")
+                if isinstance(scm, (list, set)):
+                    modes = {str(m).lower() for m in scm}
+                    supports_ct = "color_temp" in modes
+                    color_modes = {"hs", "xy", "rgb", "rgbw", "rgbww", "rgbcw"}
+                    supports_color = any(m in modes for m in color_modes)
+            any_ct = any_ct or supports_ct
+            all_ct = all_ct and supports_ct
+            any_color = any_color or supports_color
+            all_color = all_color and supports_color
+        return {"any_ct": any_ct, "all_ct": all_ct, "any_color": any_color, "all_color": all_color}
+
 def async_get_options_flow(config_entry):
-    return OptionsFlowHandler(config_entry)
+    # Deprecation: den config_entry nicht explizit setzen
+    return OptionsFlowHandler()
 
 
 def _normalize_entities(value) -> list[str]:

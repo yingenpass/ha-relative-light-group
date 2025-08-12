@@ -16,9 +16,9 @@
         "title": "Einstellungen pro Mitglied",
         "description": "Faktor sowie Minimum/Maximum für jedes Kind-Licht konfigurieren",
         "data": {
-          "factor": "Faktor",
-          "min": "Minimum",
-          "max": "Maximum"
+          "factor": "Skalierungsfaktor",
+          "min": "Minimale Helligkeit",
+          "max": "Maximale Helligkeit"
         }
       }
     }
@@ -43,9 +43,9 @@
         "title": "Einstellungen pro Mitglied",
         "description": "Faktor und Minimum/Maximum pro Kind anpassen",
         "data": {
-          "factor": "Faktor",
-          "min": "Minimum",
-          "max": "Maximum"
+          "factor": "Skalierungsfaktor",
+          "min": "Minimale Helligkeit",
+          "max": "Maximale Helligkeit"
         }
       }
     }
