@@ -1,0 +1,34 @@
+{
+    "title": "Relative Light Group",
+    "config": {
+      "step": {
+        "user": {
+          "title": "Create a Relative Light Group",
+          "description": "Select member lights and options"
+      },
+      "members": {
+        "title": "Per-member settings",
+        "description": "Configure factor and min/max for each child light"
+        }
+      },
+      "abort": {},
+      "error": {},
+      "progress": {}
+    },
+    "options": {
+      "step": {
+        "init": {
+          "title": "Edit Relative Group",
+          "description": "Change name, members and global options"
+        },
+        "edit": {
+          "title": "Edit Relative Group",
+          "description": "Change name, members and global options"
+        },
+        "edit_members": {
+          "title": "Per-member settings",
+          "description": "Adjust factor and min/max per child"
+        }
+      }
+    }
+  }

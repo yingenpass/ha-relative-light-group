@@ -1,0 +1,33 @@
+{
+  "title": "Relative Light Group",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Relative Light Group erstellen",
+        "description": "Mitgliederlichter und Optionen auswählen"
+      },
+      "members": {
+        "title": "Einstellungen pro Mitglied",
+        "description": "Faktor sowie Minimum/Maximum für jedes Kind-Licht konfigurieren"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Relative Gruppe bearbeiten",
+        "description": "Name, Mitglieder und globale Optionen ändern"
+      },
+      "edit": {
+        "title": "Relative Gruppe bearbeiten",
+        "description": "Name, Mitglieder und globale Optionen ändern"
+      },
+      "edit_members": {
+        "title": "Einstellungen pro Mitglied",
+        "description": "Faktor und Minimum/Maximum pro Kind anpassen"
+      }
+    }
+  }
+}
+
+

@@ -1,0 +1,87 @@
+set_factor:
+  name: Set factor
+  description: Set the brightness factor for a child light
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: light
+    entity_id_child:
+      name: Child light entity_id
+      required: true
+      example: light.sofa
+      selector:
+        entity:
+          domain: light
+    factor:
+      required: true
+      example: 1.25
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.01
+
+set_min_max:
+  name: Set min/max
+  description: Set the min/max brightness (0–255) for a child light
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: light
+    entity_id_child:
+      required: true
+      selector:
+        entity:
+          domain: light
+    min:
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 255
+          step: 1
+    max:
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 255
+          step: 1
+
+set_gamma:
+  name: Set gamma
+  description: Adjust gamma curve for perceived dimming
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: light
+    gamma:
+      required: true
+      selector:
+        number:
+          min: 0.1
+          max: 4
+          step: 0.1
+
+apply:
+  name: Apply current master to children
+  description: Re-apply the current master brightness (and optional color/ct) to all children
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: light
+    transition:
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 0.1
