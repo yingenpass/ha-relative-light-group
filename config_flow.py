@@ -36,6 +36,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._user_data: dict | None = None
+    
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        return OptionsFlowHandler(config_entry)
 
     # Options-Flow wird via Modul-Funktion am Ende bereitgestellt
 
