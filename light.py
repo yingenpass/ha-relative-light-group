@@ -195,7 +195,10 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        # `entity_id` sorgt dafür, dass die Frontend-Detailansicht (More Info)
+        # die Mitglieder wie bei einer normalen Lichtgruppe mit anzeigt.
         return {
+            "entity_id": list(self.entities),
             ATTR_MASTER_BRIGHTNESS: self._master_brightness,
             ATTR_FACTORS: self.factors,
             ATTR_MIN: self.min_map,
