@@ -1,11 +1,12 @@
 {
     "domain": "relative_light_group",
     "name": "Relative Light Group",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "documentation": "https://github.com/yourname/relative_light_group",
     "codeowners": ["@yourname"],
     "iot_class": "local_push",
     "requirements": [],
     "config_flow": true,
-    "integration_type": "helper"
+    "integration_type": "helper",
+    "quality_scale": "silver"
   }

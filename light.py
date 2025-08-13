@@ -15,6 +15,7 @@ from homeassistant.components.light import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.const import CONF_NAME
 
 from .const import (
@@ -26,6 +27,8 @@ from .const import (
     CONF_FORWARD_CT,
     CONF_FORWARD_COLOR,
     DEFAULT_NAME,
+    DEFAULT_MAX_BRIGHTNESS,
+    DEFAULT_MIN_BRIGHTNESS,
     ATTR_MASTER_BRIGHTNESS,
     ATTR_FACTORS,
     ATTR_MIN,
@@ -36,6 +39,8 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities):
     data = {**entry.data, **entry.options}
@@ -67,8 +72,8 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities):
         src_max = {}
 
     factors: dict[str, float] = {e: float(src_factors.get(e, 1.0)) for e in entities}
-    min_map: dict[str, int] = {e: int(src_min.get(e, 1)) for e in entities}
-    max_map: dict[str, int] = {e: int(src_max.get(e, 255)) for e in entities}
+    min_map: dict[str, int] = {e: int(src_min.get(e, DEFAULT_MIN_BRIGHTNESS)) for e in entities}
+    max_map: dict[str, int] = {e: int(src_max.get(e, DEFAULT_MAX_BRIGHTNESS)) for e in entities}
     forward_ct = bool(data.get(CONF_FORWARD_CT, False))
     forward_color = bool(data.get(CONF_FORWARD_COLOR, False))
 
@@ -89,7 +94,6 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities):
 class RelativeLightGroup(LightEntity, RestoreEntity):
     _attr_should_poll = False
     _attr_available = True
-    _attr_color_mode = ColorMode.BRIGHTNESS
     _attr_supported_features = LightEntityFeature.TRANSITION
 
     def __init__(
@@ -107,6 +111,8 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
         self.hass = hass
         self._attr_name = name
         self._attr_unique_id = unique_id
+        # Matter/Alexa-Kompatibilität: Explizite Kategorisierung
+        self._attr_entity_category = None  # Hauptgerät, nicht versteckt
         self.entities = [e for e in entities if isinstance(e, str) and e]
         self.factors = factors
         self.min_map = min_map
@@ -116,14 +122,18 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
         self.forward_color = forward_color
         self._child_supports_ct: dict[str, bool] = {}
         self._child_supports_color: dict[str, bool] = {}
+        
+        # Initialisiere mit Standard-Farbmodus
+        self._attr_color_mode = ColorMode.BRIGHTNESS
+        self._attr_supported_color_modes = {ColorMode.BRIGHTNESS}
+        
         self._refresh_child_capabilities()
 
-        # Dynamisch die unterstützten Farbmodi je nach Optionen setzen,
-        # damit die Gruppe Farb-/Farbtemperaturregler im UI anbietet
-        self._recompute_supported_color_modes()
+        # Finale Capabilities einmalig festlegen (stabil für Matter-Kompatibilität)
+        self._finalize_supported_color_modes()
 
         self._is_on = False
-        self._master_brightness = 255
+        self._master_brightness = DEFAULT_MAX_BRIGHTNESS
         self._last_kelvin: int | None = None
         self._last_hs: tuple[float, float] | None = None
 
@@ -138,32 +148,35 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(identifiers={(DOMAIN, self.unique_id or self.name)}, name=self.name)
 
+    @property
+    def device_class(self) -> str:
+        """Return device class for Matter/Alexa compatibility."""
+        return "light"
+
     @callback
     def _subscribe_child_states(self):
         @callback
         def _state_changed(event):
             eid = event.data.get("entity_id")
-            if eid not in self.entities:
-                return
             any_on = any(self.hass.states.is_state(e, "on") for e in self.entities)
             self._is_on = any_on
-            # Fähigkeiten des betroffenen Kindes aktualisieren
-            self._refresh_child_capabilities([eid])
-            # Angebotsliste der Farbmodi ggf. neu berechnen
-            self._recompute_supported_color_modes()
+            # Nur den on/off Status aktualisieren, keine Capabilities neu berechnen
+            # (Capabilities bleiben stabil für Matter-Kompatibilität)
             self.async_write_ha_state()
-        self._unsubs.append(self.hass.bus.async_listen("state_changed", _state_changed))
+        # Spezifische State-Tracker für bessere Performance
+        self._unsubs.append(async_track_state_change_event(self.hass, self.entities, _state_changed))
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         # Beim Hinzufügen einmal Fähigkeiten der Kinder erfassen und UI anpassen
         self._refresh_child_capabilities()
-        self._recompute_supported_color_modes()
+        self._finalize_supported_color_modes()
         if (state := await self.async_get_last_state()) is not None:
             self._is_on = state.state == "on"
             mb = state.attributes.get(ATTR_MASTER_BRIGHTNESS)
             if mb is not None:
-                self._master_brightness = int(mb)
+                # Stelle sicher, dass der gespeicherte Wert im Matter-Bereich liegt
+                self._master_brightness = max(DEFAULT_MIN_BRIGHTNESS, min(DEFAULT_MAX_BRIGHTNESS, int(mb)))
             # Prefer Kelvin; fallback von Mireds
             last_kelvin = state.attributes.get("color_temp_kelvin")
             if last_kelvin is None:
@@ -191,7 +204,11 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
 
     @property
     def brightness(self) -> int | None:
-        return self._master_brightness if self._is_on else None
+        # Matter-kompatibel: Bei ausgeschaltetem Zustand None zurückgeben
+        # Bei eingeschaltetem Zustand den Wert im Matter-Bereich 1-254
+        if not self._is_on:
+            return None
+        return self._master_brightness
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -208,20 +225,22 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
     @property
     def hs_color(self) -> tuple[float, float] | None:
         # Aktuellen Farbwert zurückgeben, damit UI den Farbwähler initialisiert
-        if self.forward_color:
+        if self.forward_color and self._is_on:
             return self._last_hs
         return None
 
     @property
     def color_temp_kelvin(self) -> int | None:
         # Aktuelle Kelvin-Farbtemperatur zurückgeben
-        if self.forward_ct:
+        if self.forward_ct and self._is_on:
             return self._last_kelvin
         return None
 
     async def async_turn_on(self, **kwargs: Any) -> None:
+        # Brightness im Matter-kompatiblen Bereich 0-254 begrenzen
         b = int(kwargs.get(ATTR_BRIGHTNESS, self._master_brightness))
-        self._master_brightness = max(1, min(255, int(b)))
+        self._master_brightness = max(DEFAULT_MIN_BRIGHTNESS, min(DEFAULT_MAX_BRIGHTNESS, int(b)))
+        
         # Farbtemperatur (Kelvin bevorzugt; Mireds kompatibel) akzeptieren
         if ATTR_COLOR_TEMP_KELVIN in kwargs:
             try:
@@ -246,19 +265,18 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
             if self.forward_color:
                 self._set_color_mode_if_supported(ColorMode.HS)
         tr = kwargs.get(ATTR_TRANSITION)
-        # Farbmodus final validieren (abhängig von Kinder-Fähigkeiten)
-        self._recompute_supported_color_modes()
-        await self.async_apply_to_children(transition=tr)
+        # Optimistic state update für Matter-Kompatibilität
         self._is_on = True
         self.async_write_ha_state()
+        await self.async_apply_to_children(transition=tr)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         data = {}
         if ATTR_TRANSITION in kwargs:
             data[ATTR_TRANSITION] = kwargs[ATTR_TRANSITION]
-        await self.hass.services.async_call("light", "turn_off", {"entity_id": self.entities, **data}, blocking=False)
         self._is_on = False
         self.async_write_ha_state()
+        await self.hass.services.async_call("light", "turn_off", {"entity_id": self.entities, **data}, blocking=False)
 
     # ---------- Helpers ----------
     def _apply_gamma(self, base: int) -> int:
@@ -266,12 +284,14 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
         return base
 
     async def async_apply_to_children(self, transition: float | None = None) -> None:
-        base255 = self._apply_gamma(self._master_brightness)
+        base = self._apply_gamma(self._master_brightness)
         tasks = []
         for eid in self.entities:
             fac = float(self.factors.get(eid, 1.0))
-            target = int(round(base255 * fac))
-            target = max(self.min_map.get(eid, 1), min(self.max_map.get(eid, 255), target))
+            target = int(round(base * fac))
+            target = max(self.min_map.get(eid, DEFAULT_MIN_BRIGHTNESS),
+                        min(self.max_map.get(eid, DEFAULT_MAX_BRIGHTNESS), target))
+
             payload: dict[str, Any] = {ATTR_BRIGHTNESS: target}
             if transition is not None:
                 payload[ATTR_TRANSITION] = transition
@@ -279,9 +299,16 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
                 payload[ATTR_COLOR_TEMP_KELVIN] = self._last_kelvin
             if self.forward_color and self._last_hs is not None and self._child_supports_color.get(eid, False):
                 payload[ATTR_HS_COLOR] = self._last_hs
-            tasks.append(self.hass.services.async_call("light", "turn_on", {"entity_id": eid, **payload}, blocking=True))
+
+            # WICHTIG: coroutine sammeln
+            tasks.append(
+                self.hass.services.async_call("light", "turn_on", {"entity_id": eid, **payload}, blocking=False)
+            )
         if tasks:
-            await asyncio.gather(*tasks)
+            # führt die coroutines tatsächlich aus; wartet NICHT auf Gerätezustellungsende
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+
 
     # ---------- Capabilities ----------
     def _refresh_child_capabilities(self, only_entities: list[str] | None = None) -> None:
@@ -325,36 +352,54 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
                         max_k_values.append(int(child_max_k))
             self._child_supports_ct[child] = supports_ct
             self._child_supports_color[child] = supports_color
-        # Gruppen-Kelvin-Bereich als Schnittmenge der Kinder
-        if min_k_values and max_k_values:
+        # Gruppen-Kelvin-Bereich als Schnittmenge der Kinder (nur beim ersten Mal setzen)
+        if not hasattr(self, '_attr_min_color_temp_kelvin') and min_k_values and max_k_values:
             self._attr_min_color_temp_kelvin = max(min_k_values)
             self._attr_max_color_temp_kelvin = min(max_k_values)
             if self._attr_min_color_temp_kelvin > self._attr_max_color_temp_kelvin:
                 # Fallback: unrealistischer Schnitt – nimm Spanne des ersten Kindes
                 self._attr_min_color_temp_kelvin = min(min_k_values)
                 self._attr_max_color_temp_kelvin = max(max_k_values)
-        else:
+        elif not hasattr(self, '_attr_min_color_temp_kelvin'):
             self._attr_min_color_temp_kelvin = None
             self._attr_max_color_temp_kelvin = None
 
     # ---------- Modes ----------
-    def _recompute_supported_color_modes(self) -> None:
-        modes: set[ColorMode] = set()
+    def _finalize_supported_color_modes(self) -> None:
+        """Finale Capabilities einmalig festlegen (stabil für Matter-Kompatibilität)
+        
+        WICHTIG: Diese Methode wird nur einmal bei der Initialisierung aufgerufen.
+        Matter/Alexa benötigen stabile Geräteeigenschaften und reagieren schlecht
+        auf dynamische Änderungen der supported_color_modes.
+        """
+        modes: set[ColorMode] = {ColorMode.BRIGHTNESS}  # BRIGHTNESS immer unterstützt
+        
         has_ct = self.forward_ct and any(self._child_supports_ct.values())
         has_color = self.forward_color and any(self._child_supports_color.values())
+        
         if has_color:
             modes.add(ColorMode.HS)
         if has_ct:
             modes.add(ColorMode.COLOR_TEMP)
-        if not modes:
-            modes = {ColorMode.BRIGHTNESS}
+            
         self._attr_supported_color_modes = modes
+        
         # Stelle sicher, dass der aktuelle Farbmodus ein gültiger ist
         if self._attr_color_mode not in modes:
-            self._set_color_mode_if_supported(self._attr_color_mode)
+            self._attr_color_mode = ColorMode.BRIGHTNESS
+
+    def _recompute_supported_color_modes(self) -> None:
+        """Legacy-Methode - ENTFERNT für stabile Matter-Kompatibilität
+        
+        Diese Methode wurde entfernt, da dynamische Änderungen der supported_color_modes
+        zu Problemen mit Matter/Alexa führen. Die Farbmodi werden einmalig bei der
+        Initialisierung durch _finalize_supported_color_modes() festgelegt.
+        """
+        # Absichtlich leer - keine dynamischen Änderungen mehr
+        pass
 
     def _set_color_mode_if_supported(self, preferred: ColorMode) -> None:
-        modes = self._attr_supported_color_modes or set()
+        modes = self._attr_supported_color_modes or {ColorMode.BRIGHTNESS}
         if preferred in modes:
             self._attr_color_mode = preferred
             return
@@ -369,8 +414,9 @@ class RelativeLightGroup(LightEntity, RestoreEntity):
         self.factors[child] = float(factor)
 
     def set_min_max(self, child: str, min_v: int, max_v: int) -> None:
-        self.min_map[child] = int(min_v)
-        self.max_map[child] = int(max_v)
+        # Stelle sicher, dass die Min/Max-Werte im Matter-kompatiblen Bereich liegen
+        self.min_map[child] = max(DEFAULT_MIN_BRIGHTNESS, int(min_v))
+        self.max_map[child] = max(DEFAULT_MIN_BRIGHTNESS, min(DEFAULT_MAX_BRIGHTNESS, int(max_v)))
 
     async def async_write_parameters(self):
         # just update state; parameters live in memory (options flow updates config)
